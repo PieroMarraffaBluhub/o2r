@@ -3,6 +3,10 @@
 It is a fork of [project of same name](https://github.com/MackeyStingray/o2r) to support bleak for use on Windows and maybe Mac in addition to Linux.
 Kudos to the original author for figuring out all the BLE stuff and writing an awesome program.
 
+In this fork we implement a ui for the o2ring application and the possibility to export a csv file for the session. 
+
+In windows you'll have to run the .bat file. Unfortunately in MacOs you'll have to run the script by terminal. So run the .sh file to setup the pc and run the o2ring_ui_real.py manually. Connection is automatically managed and export the csv file when disconnected.
+
 The thread (and post) on apneaboard that discusses some stuff relating to o2ring and o2r: [http://www.apneaboard.com/forums/Thread-Added-a-new-pulse-oximeter-importer?pid=388834#pid388834](http://www.apneaboard.com/forums/Thread-Added-a-new-pulse-oximeter-importer?pid=388834#pid388834).
 
 The license is unchanged (GPLv3 License).
