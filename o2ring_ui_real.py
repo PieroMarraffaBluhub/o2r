@@ -2,8 +2,12 @@ import sys
 import re
 import asyncio
 import threading
+from datetime import datetime
+import csv
+import os
 from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, 
-                               QWidget, QLabel, QHBoxLayout, QPushButton)
+                               QWidget, QLabel, QHBoxLayout, QPushButton,
+                               QFileDialog, QMessageBox)
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
 from PySide6.QtGui import QFont
 
@@ -162,6 +166,9 @@ class O2RingWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.o2r_process = None
+        self.csv_file = None
+        self.csv_writer = None
+        self.data_logged = False
         self.setWindowTitle("O2Ring Monitor")
         self.setGeometry(100, 100, 600, 500)
         
@@ -215,6 +222,14 @@ class O2RingWindow(QMainWindow):
         self.battery_label.setFont(data_font)
         self.battery_label.setStyleSheet("color: #2980b9; padding: 10px; background-color: #f0f8ff; border-radius: 8px;")
         layout.addWidget(self.battery_label)
+        
+        # Timestamp Label
+        self.timestamp_label = QLabel("Last Updated: --")
+        timestamp_font = QFont()
+        timestamp_font.setPointSize(16)
+        self.timestamp_label.setFont(timestamp_font)
+        self.timestamp_label.setStyleSheet("color: #34495e; padding: 10px; background-color: #ecf0f1; border-radius: 8px;")
+        layout.addWidget(self.timestamp_label)
         
         # Status Label
         self.status_label = QLabel("Status: Waiting for connection...")
@@ -272,22 +287,38 @@ class O2RingWindow(QMainWindow):
         
         layout.addLayout(button_layout)
         
+        # Export button
+        self.export_button = QPushButton("Export CSV")
+        self.export_button.setFont(QFont("Arial", 14))
+        self.export_button.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 8px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+            QPushButton:pressed {
+                background-color: #21618c;
+            }
+            QPushButton:disabled {
+                background-color: #bdc3c7;
+                color: #7f8c8d;
+            }
+        """)
+        self.export_button.clicked.connect(self.export_csv)
+        self.export_button.setEnabled(False)
+        layout.addWidget(self.export_button)
+        
         # Add stretch to push everything to the top
         layout.addStretch()
         
         # Initialize data thread
         self.data_thread = None
-        
-    #* def start_connection(self):
-    #    """Start the O2Ring data connection"""
-    #    if self.data_thread is None or not self.data_thread.isRunning():
-    #        self.data_thread = O2RingDataThread()
-    #        self.data_thread.data_received.connect(self.update_data)
-    #        self.data_thread.status_changed.connect(self.update_status)
-    #        self.data_thread.start()
-            
-    #        self.connect_button.setEnabled(False)
-    #        self.disconnect_button.setEnabled(True) 
 
     def start_connection(self):
         """Start o2ring.py as external process and read its output"""
@@ -307,6 +338,9 @@ class O2RingWindow(QMainWindow):
 
                 self.status_label.setText("O2Ring process started.")
 
+                # Create CSV file for this session
+                self.create_csv_file()
+
                 # Avvia thread per leggere l'output in tempo reale
                 self.output_thread = threading.Thread(
                     target=self.read_process_output,
@@ -316,10 +350,93 @@ class O2RingWindow(QMainWindow):
 
                 self.connect_button.setEnabled(False)
                 self.disconnect_button.setEnabled(True) 
+                self.export_button.setEnabled(True)
 
             except Exception as e:
                 self.status_label.setText(f"Error launching o2ring.py: {e}")
-    
+
+    def create_csv_file(self):
+        """Create a new CSV file for the current session"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.csv_file = f"o2ring_data_{timestamp}.csv"
+            
+            # Create CSV file with headers and keep it open
+            self.csv_file_handle = open(self.csv_file, 'w', newline='')
+            self.csv_writer = csv.writer(self.csv_file_handle)
+            self.csv_writer.writerow(['Timestamp', 'SpO2', 'HR', 'Perfusion_Index', 'Motion', 'Battery'])
+            
+            self.data_logged = False
+            print(f"Created CSV file: {self.csv_file}")
+            
+        except Exception as e:
+            print(f"Error creating CSV file: {e}")
+
+    def log_data_to_csv(self, data):
+        """Log data to CSV file"""
+        if self.csv_writer and data:
+            try:
+                # Check if we have actual data (not placeholder values)
+                spo2 = data.get('spo2', '--')
+                hr = data.get('hr', '--')
+                perfusion_idx = data.get('perfusion_idx', '--')
+                motion = data.get('motion', '--')
+                battery = data.get('battery', '--')
+                
+                # Only write to CSV if we have at least some valid data
+                if (spo2 != '--' or hr != '--' or perfusion_idx != '--' or 
+                    motion != '--' or battery != '--'):
+                    
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]  # Include milliseconds (3 digits)
+                    self.csv_writer.writerow([
+                        timestamp,
+                        spo2,
+                        hr,
+                        perfusion_idx,
+                        motion,
+                        battery
+                    ])
+                    # Flush the file to ensure data is written immediately
+                    self.csv_file_handle.flush()
+                    self.data_logged = True
+                    
+            except Exception as e:
+                print(f"Error writing to CSV: {e}")
+
+    def export_csv(self):
+        """Export CSV file to user-selected location"""
+        if not self.csv_file or not os.path.exists(self.csv_file):
+            QMessageBox.warning(self, "Export Error", "No data file to export.")
+            return
+        
+        try:
+            # Get save location from user
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export CSV File",
+                f"o2ring_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "CSV Files (*.csv);;All Files (*)"
+            )
+            
+            if file_path:
+                # Copy the temporary file to the selected location
+                import shutil
+                shutil.copy2(self.csv_file, file_path)
+                
+                # Delete the temporary file
+                os.remove(self.csv_file)
+                self.csv_file = None
+                self.csv_writer = None
+                self.csv_file_handle = None
+                
+                QMessageBox.information(self, "Export Successful", 
+                                      f"Data exported to:\n{file_path}")
+                
+                self.export_button.setEnabled(False)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to export file: {str(e)}")
+
     def read_process_output(self):
         """Read lines from o2ring.py stdout and update UI"""
         try:
@@ -339,8 +456,32 @@ class O2RingWindow(QMainWindow):
             self.status_label.setText("Disconnected")
             self.connect_button.setEnabled(True)
             self.disconnect_button.setEnabled(False)
+            
+            # Close CSV file handle if open
+            if hasattr(self, 'csv_file_handle') and self.csv_file_handle:
+                try:
+                    self.csv_file_handle.close()
+                except Exception as e:
+                    print(f"Error closing CSV file: {e}")
+            
+            # Enable export button only if data was logged
+            if self.data_logged and self.csv_file and os.path.exists(self.csv_file):
+                self.export_button.setEnabled(True)
+            else:
+                self.export_button.setEnabled(False)
+                # Clean up CSV file if no data was logged
+                if self.csv_file and os.path.exists(self.csv_file):
+                    try:
+                        os.remove(self.csv_file)
+                        print(f"Cleaned up empty CSV file: {self.csv_file}")
+                    except Exception as e:
+                        print(f"Error cleaning up CSV file: {e}")
+                    self.csv_file = None
+                    self.csv_writer = None
+                    self.csv_file_handle = None
+            
             self.update_status("Disconnected")
-    
+
     def update_data(self, data_line: str):
         """Update the UI with new O2Ring data"""
         try:
@@ -353,6 +494,13 @@ class O2RingWindow(QMainWindow):
             self.perfusion_label.setText(f"Perfusion Index: {data['perfusion_idx']}")
             self.motion_label.setText(f"Motion: {data['motion']}")
             self.battery_label.setText(f"Battery: {data['battery']}%")
+            
+            # Update timestamp with milliseconds
+            current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # Include milliseconds (3 digits)
+            self.timestamp_label.setText(f"Last Updated: {current_time}")
+            
+            # Log data to CSV
+            self.log_data_to_csv(data)
             
         except Exception as e:
             self.update_status(f"Error parsing data: {str(e)}")
@@ -370,6 +518,21 @@ class O2RingWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle application close event"""
+        # Close CSV file handle if open
+        if hasattr(self, 'csv_file_handle') and self.csv_file_handle:
+            try:
+                self.csv_file_handle.close()
+            except Exception as e:
+                print(f"Error closing CSV file: {e}")
+        
+        # Clean up CSV file if not exported
+        if self.csv_file and os.path.exists(self.csv_file):
+            try:
+                os.remove(self.csv_file)
+                print(f"Cleaned up unexported CSV file: {self.csv_file}")
+            except Exception as e:
+                print(f"Error cleaning up CSV file: {e}")
+        
         if self.data_thread and self.data_thread.isRunning():
             self.data_thread.stop()
             self.data_thread.wait()
