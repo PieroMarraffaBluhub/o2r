@@ -9,6 +9,8 @@ from PySide6.QtGui import QFont
 
 # Import the o2r library
 import o2r
+import subprocess
+import os
 
 
 def parse_o2ring_data(line: str) -> dict:
@@ -159,6 +161,7 @@ class O2RingDataThread(QThread):
 class O2RingWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.o2r_process = None
         self.setWindowTitle("O2Ring Monitor")
         self.setGeometry(100, 100, 600, 500)
         
@@ -275,23 +278,65 @@ class O2RingWindow(QMainWindow):
         # Initialize data thread
         self.data_thread = None
         
+    #* def start_connection(self):
+    #    """Start the O2Ring data connection"""
+    #    if self.data_thread is None or not self.data_thread.isRunning():
+    #        self.data_thread = O2RingDataThread()
+    #        self.data_thread.data_received.connect(self.update_data)
+    #        self.data_thread.status_changed.connect(self.update_status)
+    #        self.data_thread.start()
+            
+    #        self.connect_button.setEnabled(False)
+    #        self.disconnect_button.setEnabled(True) 
+
     def start_connection(self):
-        """Start the O2Ring data connection"""
-        if self.data_thread is None or not self.data_thread.isRunning():
-            self.data_thread = O2RingDataThread()
-            self.data_thread.data_received.connect(self.update_data)
-            self.data_thread.status_changed.connect(self.update_status)
-            self.data_thread.start()
-            
-            self.connect_button.setEnabled(False)
-            self.disconnect_button.setEnabled(True)
+        """Start o2ring.py as external process and read its output"""
+        if self.o2r_process is None:
+            try:
+                # Costruisci il path assoluto a o2ring.py
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                o2ring_path = os.path.join(script_dir, "o2ring.py")
+
+                self.o2r_process = subprocess.Popen(
+                    [sys.executable, "-u", o2ring_path],  # 👈 -u forza l'output non bufferizzato
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1
+                )
+
+                self.status_label.setText("O2Ring process started.")
+
+                # Avvia thread per leggere l'output in tempo reale
+                self.output_thread = threading.Thread(
+                    target=self.read_process_output,
+                    daemon=True
+                )
+                self.output_thread.start()
+
+                self.connect_button.setEnabled(False)
+                self.disconnect_button.setEnabled(True) 
+
+            except Exception as e:
+                self.status_label.setText(f"Error launching o2ring.py: {e}")
     
+    def read_process_output(self):
+        """Read lines from o2ring.py stdout and update UI"""
+        try:
+            for line in self.o2r_process.stdout:
+                if line:
+                    clean_line = line.strip()
+                    print("[O2Ring]", clean_line)  # Puoi anche loggare su UI qui
+                    self.update_data(clean_line)  # Se la linea è un dato sensore
+        except Exception as e:
+            print(f"Error reading subprocess output: {e}")
+
     def stop_connection(self):
-        """Stop the O2Ring data connection"""
-        if self.data_thread and self.data_thread.isRunning():
-            self.data_thread.stop()
-            self.data_thread.wait()
-            
+        """Stop the O2Ring process"""
+        if self.o2r_process:
+            self.o2r_process.terminate()
+            self.o2r_process = None
+            self.status_label.setText("Disconnected")
             self.connect_button.setEnabled(True)
             self.disconnect_button.setEnabled(False)
             self.update_status("Disconnected")
